@@ -22,59 +22,64 @@ def setup_logging() -> None:
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Generate context for an LLM to do coding tasks.")
+    parser = argparse.ArgumentParser(
+        description="Generate context for an LLM to do coding tasks."
+    )
     parser.add_argument("input_folder", help="Path to the input folder")
     parser.add_argument("output_file", help="Path to the output file")
+    parser.add_argument(
+        "-e", "--exclude-dirs",
+        help="Comma-separated list of additional directories to exclude",
+        default=""
+    )
     return parser.parse_args()
 
 def preprocess_gitignore_pattern(pattern: str) -> List[str]:
     """
     Convert a single .gitignore line (or default ignore entry) into one or more
     fnmatch patterns that approximate Git's directory/file ignores at any level.
-
-    Args:
-        pattern (str): The pattern from .gitignore or default ignores.
-
-    Returns:
-        List[str]: List of fnmatch patterns.
+    Removes leading '/' if present, so that '/node_modules' => 'node_modules'.
     """
     pattern = pattern.strip()
     if not pattern or pattern.startswith('#'):
         return []
 
-    # If the pattern ends with '/', it's a directory
+    # Remove leading slash if present (Git semantics: /foo => foo in root)
+    if pattern.startswith('/'):
+        pattern = pattern[1:]
+
+    # Directory pattern if it ends with '/'
     if pattern.endswith('/'):
         dir_name = pattern[:-1]  # remove trailing slash
         if '/' not in dir_name:
-            # e.g., "env/" => 4 patterns to catch top-level or deeper "env" folders
+            # e.g., "env" => 4 patterns to catch top-level or deeper "env" folders
             return [
-                dir_name,           # top-level env
-                f"{dir_name}/*",    # contents of top-level env
-                f"*/{dir_name}",    # env at deeper levels
-                f"*/{dir_name}/*"   # contents of deeper env
+                dir_name,
+                f"{dir_name}/*",
+                f"*/{dir_name}",
+                f"*/{dir_name}/*"
             ]
         else:
-            # e.g., "src/env/" => just "src/env" and "src/env/*"
+            # e.g., "src/env" => just "src/env" and "src/env/*"
             return [dir_name, f"{dir_name}/*"]
     else:
-        # It's a file pattern (no trailing slash)
-        # If there's no slash at all, prefix with "*/" so it matches anywhere
+        # It's a file pattern or directory name without trailing slash
+        # If there's no slash at all, we add patterns for top-level & any level
         if '/' not in pattern:
-            return [f"*/{pattern}", pattern]  # Match at any level and root level
+            return [
+                pattern,         # top-level folder or file
+                f"{pattern}/*",  # if it's a folder at top-level
+                f"*/{pattern}",  # subdirectory
+                f"*/{pattern}/*" # contents in subdirectory
+            ]
         else:
-            # e.g., "foo/bar.txt" => leave as is
-            return [pattern]
+            # e.g., "foo/bar" or "foo/bar.txt"
+            return [pattern, f"{pattern}/*"]
 
 def load_gitignore_patterns(gitignore_path: str) -> List[str]:
     """
     Read .gitignore file (if present) and transform each non-empty,
     non-comment line into fnmatch patterns.
-
-    Args:
-        gitignore_path (str): Path to the .gitignore file.
-
-    Returns:
-        List[str]: List of fnmatch patterns.
     """
     all_patterns: List[str] = []
     if os.path.isfile(gitignore_path):
@@ -94,13 +99,6 @@ def load_gitignore_patterns(gitignore_path: str) -> List[str]:
 def matches_gitignore(path_rel: str, ignore_patterns: List[str]) -> bool:
     """
     Check if 'path_rel' (relative path) matches any pattern in 'ignore_patterns'.
-
-    Args:
-        path_rel (str): Relative path to check.
-        ignore_patterns (List[str]): List of fnmatch patterns.
-
-    Returns:
-        bool: True if the path matches any pattern, False otherwise.
     """
     path_rel = path_rel.replace('\\', '/')
     for pat in ignore_patterns:
@@ -111,16 +109,10 @@ def matches_gitignore(path_rel: str, ignore_patterns: List[str]) -> bool:
 
 def sort_entries(entries: List[str]) -> List[str]:
     """
-    Sort entries so that:
+    Sort so that:
       1) README.md (exact name match) is first among files
       2) other files in alphabetical order
       3) directories in alphabetical order
-
-    Args:
-        entries (List[str]): List of file and directory paths.
-
-    Returns:
-        List[str]: Sorted list of entries.
     """
     files = [e for e in entries if os.path.isfile(e)]
     dirs = [e for e in entries if os.path.isdir(e)]
@@ -129,18 +121,14 @@ def sort_entries(entries: List[str]) -> List[str]:
     dirs_sorted = sorted(dirs, key=lambda x: x.lower())
     return files_sorted + dirs_sorted
 
-def generate_tree_lines(root_path: str, output_file: str, ignore_patterns: List[str], prefix: str = "") -> Generator[str, None, None]:
+def generate_tree_lines(
+    root_path: str,
+    output_file: str,
+    ignore_patterns: List[str],
+    prefix: str = ""
+) -> Generator[str, None, None]:
     """
     Recursively generate lines for the ASCII tree.
-
-    Args:
-        root_path (str): Root directory to start from.
-        output_file (str): Path to the output file (to avoid including it).
-        ignore_patterns (List[str]): List of fnmatch patterns to ignore.
-        prefix (str): Prefix for tree indentation.
-
-    Yields:
-        str: Lines of the ASCII tree.
     """
     try:
         child_names = os.listdir(root_path)
@@ -182,19 +170,15 @@ def generate_tree_lines(root_path: str, output_file: str, ignore_patterns: List[
             new_prefix = prefix + ("    " if is_last else "│   ")
             yield from generate_tree_lines(child_path, output_file, ignore_patterns, prefix=new_prefix)
 
-def gather_all_files(root_path: str, output_file: str, ignore_patterns: List[str]) -> List[str]:
+def gather_all_files(
+    root_path: str,
+    output_file: str,
+    ignore_patterns: List[str]
+) -> List[str]:
     """
     Recursively gather all files under 'root_path', skipping ignored items.
-
-    Args:
-        root_path (str): Root directory to start from.
-        output_file (str): Path to the output file (to avoid including it).
-        ignore_patterns (List[str]): List of fnmatch patterns to ignore.
-
-    Returns:
-        List[str]: List of file paths to include.
     """
-    all_files = []
+    all_files: List[str] = []
     for dirpath, dirnames, filenames in os.walk(root_path):
         # Remove directories in SKIP_DIRS
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -208,7 +192,7 @@ def gather_all_files(root_path: str, output_file: str, ignore_patterns: List[str
                 new_dirnames.append(d)
         dirnames[:] = new_dirnames
 
-        # Now check each file
+        # Check each file
         for f in filenames:
             file_path = os.path.join(dirpath, f)
 
@@ -216,7 +200,6 @@ def gather_all_files(root_path: str, output_file: str, ignore_patterns: List[str
             if os.path.abspath(file_path) == os.path.abspath(output_file):
                 continue
 
-            # Check if it matches ignore patterns
             from_repo_root = os.path.relpath(file_path, start=root_path)
             if matches_gitignore(from_repo_root, ignore_patterns):
                 continue
@@ -225,15 +208,14 @@ def gather_all_files(root_path: str, output_file: str, ignore_patterns: List[str
 
     return sorted(all_files, key=lambda x: x.lower())
 
-def write_output(output_file: str, input_folder: str, tree_lines: List[str], files_list: List[str]) -> None:
+def write_output(
+    output_file: str,
+    input_folder: str,
+    tree_lines: List[str],
+    files_list: List[str]
+) -> None:
     """
     Write the generated context to the output file.
-
-    Args:
-        output_file (str): Path to the output file.
-        input_folder (str): Path to the input folder.
-        tree_lines (List[str]): Lines of the ASCII tree.
-        files_list (List[str]): List of file paths to include.
     """
     try:
         with open(output_file, "w", encoding="utf-8") as outfile:
@@ -275,12 +257,19 @@ def main() -> None:
         logging.error(f"Input folder does not exist: {input_folder}")
         sys.exit(1)
 
+    # Load .gitignore patterns
     logging.info("Loading .gitignore patterns...")
     ignore_patterns = load_gitignore_patterns(os.path.join(input_folder, ".gitignore"))
 
     # Add default ignore patterns
     for ignore in DEFAULT_IGNORES:
         ignore_patterns.extend(preprocess_gitignore_pattern(ignore))
+
+    # If user specified extra directories to exclude, parse and add them too
+    if args.exclude_dirs:
+        exclude_list = [d.strip() for d in args.exclude_dirs.split(',') if d.strip()]
+        for folder_name in exclude_list:
+            ignore_patterns.extend(preprocess_gitignore_pattern(folder_name))
 
     logging.info(f"Loaded {len(ignore_patterns)} total ignore pattern(s).")
 

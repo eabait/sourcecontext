@@ -22,10 +22,14 @@ By respecting your project’s `.gitignore` rules (in a simplified manner) and e
 3. **Run** the following command:
 
    ```bash
-   python sourcecontext.py <input_folder> <output_file>
+   python sourcecontext.py \
+    /path/to/MyProject \
+    /path/to/MyProject_export.txt \
+    --exclude-dirs "dist,logs"
    ```
 - <input_folder>: The root directory of your project.
 - <output_file>: The path (and filename) of the text file you want to generate.
+- Add the -e or --exclude-dirs option, followed by a comma-separated list of folder names.
 #### Example
 ```bash
 python sourcecontext.py /Users/johndoe/MyProject /Users/johndoe/output_sourcecontext.txt
