@@ -1,0 +1,2113 @@
+PROJECT STRUCTURE:
+===================
+/Users/esteban.abait/Documents/Projects/enigma
+├── README.md
+├── Dockerfile
+├── requirements.txt
+├── src
+│   ├── __init__.py
+│   ├── api
+│   │   ├── __init__.py
+│   │   ├── exceptions.py
+│   │   └── main.py
+│   ├── application
+│   │   ├── __init__.py
+│   │   ├── character_chat.py
+│   │   ├── game_service.py
+│   │   ├── init.py
+│   │   ├── judge_chat.py
+│   │   └── prompts
+│   │       ├── character-context-sensitive-question-generator-prompt.md
+│   │       ├── character-system-prompt.md
+│   │       ├── judge-system-prompt.md
+│   │       └── judge-verdict-user-prompt.md
+│   ├── domain
+│   │   ├── __init__.py
+│   │   ├── entities
+│   │   │   ├── __init__.py
+│   │   │   ├── character.py
+│   │   │   ├── crime_scene.py
+│   │   │   ├── evidence.py
+│   │   │   ├── level_state.py
+│   │   │   ├── message.py
+│   │   │   ├── mind_map.py
+│   │   │   ├── questions.py
+│   │   │   └── user.py
+│   │   └── value_objects
+│   │       ├── __init__.py
+│   │       ├── occupations.py
+│   │       ├── relations.py
+│   │       └── traits.py
+│   ├── infrastructure
+│   │   ├── __init__.py
+│   │   ├── llm
+│   │   │   ├── __init__.py
+│   │   │   ├── llm_interface.py
+│   │   │   └── openai_llm.py
+│   │   └── logging
+│   │       ├── __init__.py
+│   │       └── logger.py
+│   └── levels
+│       ├── chicago_1920.json
+│       └── tokyo_2025.json
+└── tests
+    ├── conftest.py
+    └── test_e2e.py
+
+
+FILE CONTENTS:
+===================
+=== PATH: Dockerfile ===
+
+FROM python:3.10-slim
+
+WORKDIR /code
+
+COPY ./requirements.txt /code/requirements.txt
+
+RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+
+COPY ./src /code
+COPY .env* /code/
+
+CMD ["fastapi", "run", "api/main.py", "--port", "80"]
+
+=== PATH: README.md ===
+# enigma
+Enigma
+
+# Before Start
+## Environment
+The environment variable ENV indicates the current envirmentment. Based on that variable is which environment file
+will be used: ´.env.{ENV}´.
+
+# Running
+
+### From Python
+- [DEV] Run from source code in the terminal `fastapi dev src/api/main.py`.
+- [PROD] Run from source code in the terminal `ENV=production fastapi run src/api/main.py --host 0.0.0.0 --port 8000`.
+
+# Deployment in Digital Ocean
+Systemd service is used to manage the FastAPI application as a background service that starts automatically on boot.
+
+### Step 0 - From a fresh Digital Ocean VM
+- `sudo apt update`
+- `sudo apt install git` & configure SSH key
+- `git clone https://github.com/eabait/enigma`
+- Install PYenv `curl -fsSL https://pyenv.run | bash` and configure .bashrc so is present in the PATH. Also cnfigure profile
+- Install Python from pre-compile sources: `PYTHON_BUILD_MIRROR_URL="https://www.python.org/ftp/python" pyenv install 3.10.4`
+- Set the correct python version with Pyenv: `pyenv global 3.10.4`
+- Inside engima directory:
+    - Create .env.production file with all the environmental variables required.
+    - Create a `db` folder inside `src` with the right access (`chmod -R 755 src/db`)
+
+### Step 1: Create a Systemd Service File
+Create a file /etc/systemd/system/fastapi.service:
+
+```bash
+sudo nano /etc/systemd/system/fastapi.service
+```
+Add the following content:
+
+```
+[Unit]
+Description=FastAPI Application
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/enigma
+Environment="ENV=production"
+ExecStart=/root/.pyenv/shims/fastapi run src/api/main.py --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+### Step 2: Reload and Enable the Service
+Reload systemd to apply the changes:
+
+```bash
+sudo systemctl daemon-reload
+```
+Enable the service to start on boot:
+
+```bash
+sudo systemctl enable fastapi
+```
+Start the service:
+
+```bash
+sudo systemctl start fastapi
+```
+Restart the service (after updating source code):
+
+```bash
+sudo systemctl restart fastapi
+```
+Check the service status:
+
+```bash
+sudo systemctl status fastapi
+```
+Logs can be checked with:
+
+```bash
+journalctl -u fastapi
+```
+# Docker [Not used but it works]
+## Requirements
+- Docker 
+- [Colima](https://github.com/abiosoft/colima)
+## Installation
+For MacOs: `brew install docker` and ` brew install colima`
+- Build image `docker build -t enigma-development .`
+- Rebuild image `docker build -t enigma-development .` & `docker stop enigma` & `docker rm enigma` & run it
+- Run image `docker run -d --name enigma -p 8000:80 -e ENV=development enigma-development`
+
+
+## Firewall config
+[https://www.digitalocean.com/community/tutorials/how-to-set-up-a-firewall-with-ufw-on-ubuntu]([text](https://www.digitalocean.com/community/tutorials/how-to-set-up-a-firewall-with-ufw-on-ubuntu))
+
+# Tests
+In the test code snippet (the E2E tests), we override the production database with an in-memory SQLite database:
+
+```python
+TEST_DATABASE_URL = "sqlite:///:memory:"
+test_engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+```
+and then:
+```python
+@pytest.fixture(scope="session", autouse=True)
+def setup_database():
+    SQLModel.metadata.create_all(test_engine)
+    yield
+    # No teardown needed for in-memory DB
+```
+Here, the DB is not a file on disk but an ephemeral, in-memory DB. It lives only during the test session, allowing you to run tests without altering the real database. Once the tests end, that in-memory database disappears, so no .db file is created.
+
+## Run tests
+`PYTHONPATH=$(pwd) pytest -s`
+
+
+
+
+
+
+
+
+=== PATH: requirements.txt ===
+annotated-types==0.7.0
+anyio==4.6.0
+Authlib==1.4.0
+certifi==2024.8.30
+cffi==1.17.1
+charset-normalizer==3.3.2
+click==8.1.7
+cryptography==44.0.0
+distro==1.9.0
+dnspython==2.6.1
+ecdsa==0.19.0
+email_validator==2.2.0
+exceptiongroup==1.2.2
+fastapi==0.115.0
+fastapi-cli==0.0.5
+filelock==3.15.4
+fsspec==2024.6.1
+h11==0.14.0
+httpcore==1.0.5
+httptools==0.6.1
+httpx==0.27.2
+huggingface-hub==0.24.6
+idna==3.8
+inquirerpy==0.3.4
+Jinja2==3.1.4
+jiter==0.5.0
+markdown-it-py==3.0.0
+MarkupSafe==2.1.5
+mdurl==0.1.2
+openai==1.50.2
+packaging==24.1
+pfzy==0.3.4
+prompt_toolkit==3.0.47
+pyasn1==0.6.1
+pycparser==2.22
+pydantic==2.9.2
+pydantic_core==2.23.4
+Pygments==2.18.0
+python-dotenv==1.0.1
+python-jose==3.3.0
+python-multipart==0.0.12
+PyYAML==6.0.2
+requests==2.32.3
+rich==13.8.1
+rsa==4.9
+shellingham==1.5.4
+six==1.17.0
+sniffio==1.3.1
+SQLAlchemy==2.0.36
+sqlmodel==0.0.22
+starlette==0.38.6
+tqdm==4.66.5
+typer==0.12.5
+typing_extensions==4.12.2
+urllib3==2.2.2
+uvicorn==0.31.0
+uvloop==0.20.0
+watchfiles==0.24.0
+wcwidth==0.2.13
+websockets==13.1
+
+
+=== PATH: src/__init__.py ===
+
+
+=== PATH: src/api/__init__.py ===
+from .main import app
+
+
+=== PATH: src/api/exceptions.py ===
+from typing import Any, Dict, Optional
+
+from fastapi import HTTPException, status # type: ignore
+
+
+class AuthError(HTTPException):
+    def __init__(self, detail: Any = None, headers: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(status.HTTP_403_FORBIDDEN, detail, headers)
+
+
+class NotFoundError(HTTPException):
+    def __init__(self, detail: Any = None, headers: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(status.HTTP_404_NOT_FOUND, detail, headers)
+
+
+class ValidationError(HTTPException):
+    def __init__(self, detail: Any = None, headers: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(status.HTTP_422_UNPROCESSABLE_ENTITY, detail, headers)
+
+class ServiceUnavailableError(HTTPException):
+    def __init__(self, detail: Any = None, headers: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(status.HTTP_503_SERVICE_UNAVAILABLE, detail, headers)
+
+
+class ConflictError(HTTPException):
+    def __init__(self, detail: Any = None, headers: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(status.HTTP_409_CONFLICT, detail, headers)
+
+
+=== PATH: src/api/main.py ===
+import os
+import requests # type: ignore
+from typing import Annotated
+from src.api.exceptions import ValidationError
+from src.domain.entities.user import User
+from fastapi import FastAPI, Depends, HTTPException # type: ignore
+from fastapi.middleware.cors import CORSMiddleware # type: ignore
+from fastapi.security import HTTPBearer # type: ignore
+from fastapi.openapi.utils import get_openapi # type: ignore
+from contextlib import asynccontextmanager
+from sqlmodel import SQLModel, create_engine, Session # type: ignore
+from starlette.config import Config # type: ignore
+from starlette.requests import Request # type: ignore
+from starlette.responses import JSONResponse # type: ignore
+from jose import jwt # type: ignore
+from jose.exceptions import JWTError # type: ignore
+from src.domain.entities.message import Message
+from src.domain.entities.mind_map import MindMap
+from src.domain.entities.level_state import LevelState
+from src.application.game_service import GameService
+from src.application.init import init
+from src.infrastructure.logging.logger import getLogger
+
+logger = getLogger()
+
+origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://192.168.1.191:3000",
+    "http://192.168.68.62:3000",
+    "https://enigma-web-nu.vercel.app",
+    "https://app.shadum.fun"
+]
+
+llm_interface = None
+game_service = None
+
+sqlite_file_name = f"{os.path.dirname(__file__)}/../db/database.db"
+sqlite_url = f"sqlite:///{sqlite_file_name}"
+
+connect_args = {"check_same_thread": False}
+engine = create_engine(sqlite_url, connect_args=connect_args)
+
+def initialize_services():
+    global llm_interface, game_service
+    if llm_interface is None or llm_interface == False:
+        llm_interface = init()
+        game_service = GameService(llm_interface)
+
+def get_session():
+    with Session(engine) as session:
+        yield session
+
+def create_db_and_tables():
+    if os.getenv("ENV") != "test":
+        SQLModel.metadata.create_all(engine)
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize_services()
+    create_db_and_tables()
+    yield
+
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+security = HTTPBearer()
+
+def get_jwk():
+    url = f"https://{os.getenv('AUTH0_DOMAIN')}/.well-known/jwks.json"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise HTTPException(status_code=401, detail="Unable to fetch JWKS")
+    return response.json()
+
+def verify_jwt(token: str):
+    try:
+        jwks = get_jwk()
+        unverified_header = jwt.get_unverified_header(token)
+        rsa_key = {}
+        for key in jwks["keys"]:
+            if key["kid"] == unverified_header["kid"]:
+                rsa_key = {
+                    "kty": key["kty"],
+                    "kid": key["kid"],
+                    "use": key["use"],
+                    "n": key["n"],
+                    "e": key["e"],
+                }
+        if rsa_key:
+            payload = jwt.decode(
+                token,
+                rsa_key,
+                algorithms=["RS256"],
+                audience=os.getenv('AUTH0_API_AUDIENCE'),
+                issuer=f"https://{os.getenv('AUTH0_DOMAIN')}/",
+            )
+            return payload
+        else:
+            raise HTTPException(status_code=401, detail="Unable to find appropriate key")
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+def get_current_user(
+    token: str = Depends(security),
+    session: Session = Depends(get_session),
+):
+    payload = verify_jwt(token.credentials)
+    auth0_id = payload.get("sub")
+    if not auth0_id:
+        raise HTTPException(status_code=401, detail="Invalid token payload")
+    game_service = GameService(llm_interface)
+    user = game_service.find_user_by_auth0_id(auth0_id, session)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+@app.post("/users/", response_model=User)
+def create_user(new_user: User, session: SessionDep): # type: ignore
+    # 1. Check if user already exists in DB
+    db_user = game_service.find_user_by_auth0_id(new_user.auth0_id, session)
+    
+    # 2. If no user, create one
+    if not db_user:
+        db_user = game_service.create_user(new_user, session)
+    
+    return db_user
+
+@app.get("/game/levels")
+def levels(session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    return game_service.find_all_levels(user.auth0_id, session)
+
+@app.patch("/game/levels/{level_id}")
+def levels(
+    level_id: str, 
+    level_state: LevelState, 
+    session: Session = Depends(get_session), 
+    user: User = Depends(get_current_user)
+): 
+    updated_level = game_service.upsert_level_state(
+        level_id=level_id,
+        user_id=user.auth0_id,
+        level_state=level_state,
+        session=session
+    )
+    return updated_level
+
+@app.get("/game/levels/{level_id}/characters/{character_id}")
+def chat(level_id: str, character_id: str, user: User = Depends(get_current_user)): # type: ignore
+    level = game_service.find_level_by_id(level_id)
+    return game_service.find_character_by_id(level, character_id)
+
+
+@app.get("/game/levels/{level_id}/characters/{character_id}/chat")
+def chat(level_id: str, character_id: str, session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    level = game_service.find_level_by_id(level_id) # Check if level exists
+    game_service.find_character_by_id(level, character_id) #check if character exists
+    chats = game_service.get_past_chat(user.auth0_id, character_id, session)
+    return chats
+
+@app.post("/game/levels/{level_id}/characters/chat")
+def chat(level_id: str, message: Message, session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    logger.info(f"Received message: {message}")
+    level = game_service.find_level_by_id(level_id)
+    return game_service.get_answer_from(user.auth0_id, level, message, session)    
+
+@app.get("/game/levels/{level_id}/characters/{character_id}/questions")
+def chat(level_id: str, character_id: str, session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    level = game_service.find_level_by_id(level_id)
+    return game_service.get_context_sensitive_questions_for(user.auth0_id, level, character_id, session)
+
+@app.post("/game/levels/{level_id}/mind_map")
+def mind_map(level_id: str, mind_map: MindMap, session: SessionDep): # type: ignore
+    level = game_service.find_level_by_id(level_id)
+    game_service.find_character_by_id(level, mind_map.character_id) #check if character exists
+    # check evidence_id is valid
+    evidence = next((e for e in level.get("evidence") if e.get("id") == mind_map.evidence_id), None)
+    if evidence is None:
+        raise ValidationError(f"Evidence id {mind_map.evidence_id} not found in level {level.get('id')}")
+    return game_service.create_mind_map(mind_map, session)
+
+@app.get("/game/levels/{level_id}/mind_map/{evidence_id}")
+def mind_map(level_id: str, evidence_id: str, session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    level = game_service.find_level_by_id(level_id)
+    # check evidence_id is valid
+    evidence = next((e for e in level.get("evidence") if e.get("id") == evidence_id), None)
+    if evidence is None:
+        raise ValidationError(f"Evidence id {evidence_id} not found in level {level.get('id')}")
+    return game_service.find_mind_map_by_evidence_id(user.auth0_id, level_id, evidence_id, session)
+    
+@app.delete("/game/levels/{level_id}/mind_map/{mind_map_id}")
+def mind_map(level_id: str, mind_map_id: str, session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    game_service.find_level_by_id(level_id) # Check if level exists
+    return game_service.delete_mind_map(mind_map_id, session)
+
+@app.post("/game/levels/{level_id}/judge")
+def mind_map(level_id: str, player_theory: dict, session: SessionDep, user: User = Depends(get_current_user)): # type: ignore
+    level = game_service.find_level_by_id(level_id)
+    return game_service.get_judge_verdict(user.auth0_id, level, player_theory, session)
+
+
+=== PATH: src/application/__init__.py ===
+from .game_service import GameService
+from .character_chat import CharacterChat
+from .judge_chat import JudgeChat
+from .init import init
+
+=== PATH: src/application/character_chat.py ===
+import os
+from typing import List, Union
+from src.domain.entities.character import Character
+from src.domain.entities.questions import Questions
+from src.domain.entities.evidence import Evidence
+from src.infrastructure.llm.llm_interface import LLMInterface
+import logging
+
+logger = logging.getLogger(__name__)
+PROMPTS_PATH = f"{os.path.dirname(__file__)}/prompts"
+
+class CharacterChat():
+
+    def __init__(
+        self,
+        character: Character,
+        llm: LLMInterface
+    ):
+        self.character = character
+        self.llm = llm
+        self.character_context_sensitive_question_prompt_template = ''
+        self.base_prompt_template = ''
+        try:
+            with open(f"{PROMPTS_PATH}/character-context-sensitive-question-generator-prompt.md", 'r') as file:
+                self.character_context_sensitive_question_prompt_template = file.read()
+        except FileNotFoundError:
+            logger.error("character-context-sensitive-question-generator-prompt.md not found")
+        except IOError as e:
+            logger.error(f"Error reading character-context-sensitive-question-generator-prompt.md: {e}")
+
+        try:
+            with open(f"{PROMPTS_PATH}/character-system-prompt.md", 'r') as file:
+                self.base_prompt_template = file.read()
+            self.character_system_prompt = self.create_prompt(
+                self.base_prompt_template,
+                name=character.name,
+                age=character.age,
+                occupation=character.occupation.value,
+                traits='. '.join([trait.value for trait in character.traits]),
+                background='. '.join(character.background),
+                undisclosed_facts='. '.join(character.undisclosed_facts),
+                relation_to_crime=character.relation_to_crime.value,
+                crime_location_city=character.crime_scene.location.city,
+                crime_year=character.crime_scene.location.year,
+                crime_era_references='', #'. '.join(character.crime_scene.historical_references),
+                crime_victim=character.crime_scene.victim_name,
+                alibi=character.alibi
+            )
+        except FileNotFoundError:
+            logger.error("character-base-prompt.md not found")
+        except IOError as e:
+            logger.error(f"Error reading character-base-prompt.md: {e}")
+
+    ## Example usage
+    # template = "Hello {name}, welcome to {place}!"
+    # prompt = create_prompt(template, name="Alice", place="Wonderland")
+    # print(prompt)
+    def create_prompt(self, template: str, **kwargs):
+        return template.format(**kwargs)
+    
+    def generate_dynamic_dialogue(self, context: str, messages: List[str]) -> Union[str, None]:
+        """
+        Generate a dynamic dialogue response based on the character's traits and background.
+
+        Args:
+            context (str): The context for the dialogue.
+            messages (List[str]): the chat history between this Character and the player.
+
+        Returns:
+            Union[str, None]: The generated dialogue or None if an error occurred.
+        """
+        chat_history='\n'.join(messages)
+        prompt = f"""
+            ## Chat History:
+            {chat_history}
+
+            ## Current Question/Statement from Detective:
+            {context}
+            Respond as {self.character.name} to the detective's current question or statement, taking into account the entire 
+            conversation history and any evidence that has been presented.
+        """
+        try:
+            return self.llm.generate_text(system_prompt=self.character_system_prompt, user_prompt=prompt)
+        except Exception as e:
+            logger.error(f"Error generating dynamic dialogue: {e}")
+            raise
+
+    def generate_context_sensitive_questions(
+        self,
+        linked_evidence: List[Evidence],
+        messages: List[str]
+    ) -> List[str]:
+        """
+        Generate a context-sensitive question for the player to ask the character.
+
+        Args:
+            linked_evidence (List[Evidence]): A list of linked evidence to this Character.
+            messages (List[str]): the chat history between this Character and the player.
+
+        Returns:
+            List[str]: The generated list of questions
+        """
+
+        prompt = self.create_prompt(
+            self.character_context_sensitive_question_prompt_template,
+            suggested_link_evidence=', '.join([evidence.long_description for evidence in linked_evidence]),
+            number_of_questions=1,
+            chat_history='\n'.join(messages)
+        )
+    
+        try:
+            questionsJson = self.llm.generate_json(
+                system_prompt=self.character_system_prompt, 
+                user_prompt=prompt,
+                response_format=Questions
+            )
+            questions = Questions.model_validate(questionsJson)
+            return [question.text for question in questions.list]
+        except Exception as e:
+            logger.error(f"Error generating context-sensitive question: {e}")
+            raise
+
+=== PATH: src/application/game_service.py ===
+import os
+import json
+from src.application.judge_chat import JudgeChat
+from src.domain.entities.level_state import LevelState, LevelStates
+from src.domain.entities.user import User
+from src.domain.value_objects.relations import RelationToCrime
+from sqlalchemy.exc import IntegrityError # type: ignore
+from typing import Any, List, Dict, Union
+from src.api.exceptions import ConflictError, NotFoundError
+from src.domain.entities.crime_scene import CrimeScene, Location
+from src.domain.entities.message import Message, MessageType
+from src.domain.entities.character import Character
+from src.application.character_chat import CharacterChat
+from src.domain.entities.mind_map import MindMap
+from src.infrastructure.llm.llm_interface import LLMInterface
+from src.infrastructure.logging.logger import getLogger
+from sqlmodel import Session, select # type: ignore
+
+logger = getLogger()
+
+LEVELS_DIRECTORY = os.path.join(os.path.dirname(__file__), "../levels")
+
+class GameService:
+    def __init__(self, llm: LLMInterface):
+        self.llm = llm
+
+    def get_level_state(self, level_id: str, user_level_state: List[LevelState]) -> LevelState:
+        level = [l.state for l in user_level_state if l.id == level_id]
+        if len(level) == 0:
+            return LevelStates.NON_STARTED
+        else:
+            return level[0]
+
+    def find_all_levels(self, user_id: str, session: Session) -> Dict[str, dict]:
+        levels = {}
+
+        db_levels_states = self.find_all_level_state(user_id, session)
+
+        for filename in os.listdir(LEVELS_DIRECTORY):
+            if filename.endswith(".json"):
+                with open(os.path.join(LEVELS_DIRECTORY, filename), 'r') as file:
+                    level_data = json.load(file)
+                    level_id = level_data.get("id", filename)
+                    level_data["state"] = self.get_level_state(level_id, db_levels_states)
+                    levels[level_id] = level_data
+        
+        return levels
+    
+    def find_all_level_state(self, user_id: str, session: Session) -> List[LevelState]:
+        return session.exec(select(LevelState).filter_by(
+            user_id=user_id
+        )).all()
+    
+    def find_level_by_id(self, level_id: str) -> dict:
+        for filename in os.listdir(LEVELS_DIRECTORY):
+            if filename.endswith(".json") and filename.startswith(level_id):
+                with open(os.path.join(LEVELS_DIRECTORY, filename), 'r') as file:
+                    level_data = json.load(file)
+                    return level_data
+        raise NotFoundError("Level not found.")
+    
+    def find_level_state_by_id(self, level_id: str, session: Session) -> List[LevelState]:
+        return session.exec(select(LevelState).filter_by(
+            id=level_id
+        )).one_or_none()
+    
+    def upsert_level_state(
+        self,
+        level_id: str,
+        user_id: str,                # or user_id: str | None, depending on your logic
+        level_state: LevelState, 
+        session: Session
+    ) -> LevelState:
+        # Attempt to find an existing level state
+        level = self.find_level_state_by_id(level_id, session)
+
+        # Convert the incoming Pydantic model to a dict (only fields that were set)
+        level_data = level_state.model_dump(exclude_unset=True)
+
+        # If not found, create a new LevelState
+        if level is None:
+            level = LevelState(id=level_id, user_id=user_id)
+        
+        # Update fields on the ORM object
+        for key, value in level_data.items():
+            setattr(level, key, value)
+
+        # Add to session and commit
+        session.add(level)
+        session.commit()
+        session.refresh(level)
+        
+        return level
+    
+    def get_past_chat(self, user_id: str, character_id: str, session: Session) -> List[Message]:
+        fetched_chats = session.exec(select(Message).filter_by(
+            from_id=user_id,
+            to_id=character_id
+        )).all()
+        return fetched_chats
+    
+    def unserialize_character(self, level: dict, character: dict) -> Character:
+        # If 'crime_scene' is already a Pydantic object, no need to process further
+        if isinstance(character.get("crime_scene"), CrimeScene):
+            crime_scene = character["crime_scene"]
+        else:
+            # Extract crime_scene data from level if necessary
+            crime_scene_data = level.get("crime_scene", {})
+            
+            # Convert location to a Location object
+            location_data = crime_scene_data.get("location", {})
+            location = Location(**location_data)
+
+            # Convert to a CrimeScene object
+            crime_scene = CrimeScene(**{**crime_scene_data, "location": location})
+
+            # Update the character with the processed crime_scene
+            character["crime_scene"] = crime_scene
+
+            # Return character as a Pydantic object
+            return Character(**character)
+    
+    def find_character_by_id(self, level: dict, character_id: str) -> Character:
+        characters_data = level.get("characters")
+        for character in characters_data:
+            if character.get("id") == character_id:
+                return self.unserialize_character(level, character)
+        raise NotFoundError(f"Character id {character_id} not found in level {level.get('id')}.")
+    
+    def serialize_chat(self, past_chat: List[Message]) -> List[str]:
+        return [f"Detective > {m.text}" if m.type == MessageType.QUESTION else m.text for m in past_chat]
+    
+    def get_answer_from(self, user_id: str, level: dict, question: Message, session: Session) -> Message:
+        character = self.find_character_by_id(level, question.to_id)
+        chat = CharacterChat(
+            character=character, 
+            llm=self.llm
+        )
+        past_chat = self.get_past_chat(user_id, question.to_id, session)
+        past_chat_text = self.serialize_chat(past_chat)
+
+        characterAnswerText = chat.generate_dynamic_dialogue(
+            question.text, 
+            past_chat_text
+        )
+        answer = Message(from_id=user_id, to_id=question.to_id, text=characterAnswerText, type=MessageType.ANSWER)
+            
+        session.add(question)
+        session.add(answer)
+        session.commit()
+        session.refresh(answer)
+
+        return answer
+
+    def get_context_sensitive_questions_for(self, user_id: str, level: dict, character_id: str, session: Session) -> List[str]:
+        character = self.find_character_by_id(level, character_id)
+        linked_evidence = []
+        chat = CharacterChat(
+            character=character, 
+            llm=self.llm
+        )
+        past_chat = self.get_past_chat(user_id, character_id, session)
+        past_chat_text = self.serialize_chat(past_chat)
+        return chat.generate_context_sensitive_questions(linked_evidence, past_chat_text)
+    
+    def create_mind_map(self, mind_map: dict, session: Session):
+        try:
+            session.add(mind_map)
+            session.commit()
+            session.refresh(mind_map)
+            return mind_map
+        except IntegrityError as e:
+            logger.error(f"Error creating mind map: {e}")
+            session.rollback()
+            raise ConflictError("Error creating MindMap. This connection already exists.")
+    
+    def find_mind_map_by_evidence_id(self, user_id: str, level_id:str, evidence_id: str, session: Session) -> List[Message]:
+        connections = session.exec(select(MindMap).filter_by(
+            user_id=user_id,
+            evidence_id=evidence_id,
+            level_id=level_id
+        )).all()
+        return connections
+    
+    def delete_mind_map(self, mind_map_id: str, session: Session):
+        mind_map = session.get(MindMap, mind_map_id)
+        if mind_map is None:
+            raise NotFoundError(f"Mind map id {mind_map_id} not found.")
+        session.delete(mind_map)
+        session.commit()
+        return mind_map
+    
+    def find_user_by_auth0_id(self, auth0_id: str, session: Session) -> User | None:
+        return session.exec(select(User).filter_by(
+            auth0_id=auth0_id
+        )).one_or_none()
+    
+    def create_user(self, user: dict, session: Session) -> User:
+        try:
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+            return user
+        except IntegrityError as e:
+            logger.error(f"Error creating user: {e}")
+            session.rollback()
+            raise ConflictError("Error creating user.")
+        
+    def find_mind_map_by_level_id(self, user_id: str, level_id: str, session: Session) -> List[Message]:
+        connections = session.exec(select(MindMap).filter_by(
+            user_id=user_id,
+            level_id=level_id
+        )).all()
+        return connections
+        
+    def get_judge_verdict(self, user_id: str, level: dict, player_theory: dict, session: Session) -> Union[Dict[str, Any], None]:
+        key_clues = [f"Evidence ID {e.get('id')}: {e.get('name')}" for e in level.get('evidence') if e.get("is_key") == "true"]
+        murder = [c for c in level.get('characters') if c.get("relation_to_crime") == RelationToCrime.GUILTY.value]
+        murder_character = self.unserialize_character(level, murder[0])
+
+        judge = JudgeChat(
+            self.llm, 
+            murder_character,
+            key_clues
+        )
+        
+        mind_map = self.find_mind_map_by_level_id(user_id, level.get('id'), session)
+        player_evidences = [f"Evidence ID {mm.evidence_id} is linked to Suspect id {mm.character_id} due to {mm.reason}" for mm in mind_map]
+
+        theory = f"Suspect: {player_theory.get('suspect')} \n"
+        theory += f"Motive: {player_theory.get('motive')} \n"
+        theory += f"Method: {player_theory.get('method')} \n"
+        theory += f"Evidence: {', '.join(player_evidences)}"
+        logger.info("Case User Theory " + theory)
+
+        verdict = judge.get_verdict(theory)
+        
+        logger.info(f"Judgment: {verdict.judgment}\nExplanation: {verdict.explanation}\nhints: {', '.join(verdict.hints)}")
+
+        return verdict
+
+
+=== PATH: src/application/init.py ===
+import os
+from dotenv import load_dotenv # type: ignore
+from src.infrastructure.logging.logger import getLogger
+from src.infrastructure.llm.openai_llm import OpenAILLM
+
+# Get a custom logger & set the logging level
+logger = getLogger()
+
+def init():
+    logger.info("Starting game loop")
+
+    # Load environment variables from .env.{environment} file
+    # Determine environment (default to development)
+    environment = os.getenv("ENV", "development")
+
+    # Load the appropriate .env file
+    dotenv_file = f".env.{environment}"
+    load_dotenv(dotenv_file)
+
+    # Initialize the LLM interface with caching
+    try:
+        llm = OpenAILLM()
+    except ValueError as e:
+        logger.error(f"Failed to initialize OpenAILLM: {e}")
+        return False
+
+    return llm
+        
+
+=== PATH: src/application/judge_chat.py ===
+import os
+from pydantic import BaseModel, Field # type: ignore
+from typing import Union, Dict, Any, List
+from src.domain.entities.character import Character
+from src.infrastructure.llm.llm_interface import LLMInterface
+import logging
+
+logger = logging.getLogger(__name__)
+PROMPTS_PATH = f"{os.path.dirname(__file__)}/prompts"
+
+class JudgeVerdict(BaseModel):
+    judgment: str = Field(..., description="One of 'correct', 'partially_correct', or 'incorrect'.")
+    explanation: str = Field(..., description="A concise paragraph summarizing the Judge's reasoning.")
+    hints: List[str] = Field(default_factory=list, description="A short list of hints for the player.")
+
+class JudgeChat:
+    def __init__(self, llm: LLMInterface, murder: Character, key_clues: List[str]):
+        """
+        Args:
+            llm: An object representing your LLM interface 
+                 (must have a .generate_text(system_prompt, user_prompt) method).
+            case_truth (str): The canonical truth or correct solution information 
+                              needed by the Judge. 
+        """
+        self.llm = llm
+        self.case_truth = self.get_case_truth(murder=murder, key_clues=key_clues)
+        self.judge_words_blacklist = self.get_blacklisted_words(murder=murder, key_clues=key_clues)
+        self.system_prompt_template = ''
+        self.system_prompt = ''
+        self.verdict_prompt_template = ''
+        try:
+            with open(f"{PROMPTS_PATH}/judge-system-prompt.md", 'r') as file:
+                self.system_prompt_template = file.read()
+            self.character_system_prompt = self.create_prompt(
+                self.system_prompt_template,
+                year=murder.crime_scene.location.year,
+                city=murder.crime_scene.location.city
+            )
+        except FileNotFoundError:
+            logger.error("judge-system-prompt.md not found")
+        except IOError as e:
+            logger.error(f"Error reading judge-system-prompt.md: {e}")
+
+        try:
+            with open(f"{PROMPTS_PATH}/judge-verdict-user-prompt.md", 'r') as file:
+                self.verdict_prompt_template = file.read()
+        except FileNotFoundError:
+            logger.error("judge-verdict-user-prompt.md not found")
+        except IOError as e:
+            logger.error(f"Error reading judge-verdict-user-prompt.md: {e}")
+        
+    def get_case_truth(self, murder: Character, key_clues: List[str]) -> str:
+        canonical_truth = f"Murderer: {murder.name} with ID {murder.id}\n"
+        canonical_truth += f"Motive: {murder.crime_scene.motive}\n"
+        canonical_truth += f"Method: {murder.crime_scene.method}\n"
+        canonical_truth += f"Key Clues: {', '.join(key_clues)}"
+        logger.info("Case Truth " + canonical_truth)
+        return canonical_truth
+
+    def get_blacklisted_words(self, murder: Character, key_clues: List[str]) -> List[str]:
+        blacklist = [murder.name, murder.crime_scene.motive, murder.crime_scene.method]
+        blacklist.extend(murder.name.split())
+        for clue in key_clues:
+            clue_parts = clue.split(": ")
+            if len(clue_parts) > 1:
+                blacklist.append(clue_parts[1])
+        return blacklist
+    
+    ## Example usage
+    # template = "Hello {name}, welcome to {place}!"
+    # prompt = create_prompt(template, name="Alice", place="Wonderland")
+    # print(prompt)
+    def create_prompt(self, template: str, **kwargs):
+        return template.format(**kwargs)
+    
+    def sanitize_judge_response(self, response_text: str, forbidden_keywords: List[str]) -> str:
+        for keyword in forbidden_keywords:
+            if keyword.lower() in response_text.lower():
+                # You can replace or remove references
+                response_text = response_text.replace(keyword, "[REDACTED]")
+        return response_text
+
+    def get_verdict(self, player_mindmap: str) -> Union[Dict[str, Any], None]:
+        """
+        Evaluate the player's submitted MindMap against the case truth and return a JSON 
+        response with judgment, explanation, and optional hints.
+
+        Args:
+            player_mindmap (str): The player's submitted theory.
+
+        Returns:
+            Union[Dict[str, Any], None]: A dictionary containing keys "judgment", 
+                                         "explanation", and "hints", or None if an error occurred.
+        """
+        user_prompt = self.create_prompt(
+            self.verdict_prompt_template,
+            case_truth=self.case_truth,
+            player_mindmap=player_mindmap
+        )
+
+        try:
+            # Include the "Response Required" structure in the system prompt
+            response_required = """
+            Response Required:
+            {
+                "judgment": "correct" | "partially_correct" | "incorrect",
+                "explanation": "A concise paragraph of broad reasoning.",
+                "hints": ["Short, high-level hint 1", "Short, high-level hint 2", "Short, high-level hint 3"]
+            }
+            """
+            
+            # Append "Response Required" to the system prompt
+            complete_system_prompt = f"{self.system_prompt}\n\n{response_required}"
+            
+            # Generate response
+            verdictJson = self.llm.generate_json(
+                system_prompt=complete_system_prompt,
+                user_prompt=user_prompt,
+                response_format=JudgeVerdict
+            )
+            
+            # Validate the generated response against the JudgeVerdict model
+            verdict = JudgeVerdict.model_validate(verdictJson)
+            
+            # Sanitize the response if needed 
+            if verdict.judgment == 'incorrect' or verdict.judgment == 'partially_correct':
+                verdict.explanation = self.sanitize_judge_response(
+                    verdict.explanation,
+                    self.judge_words_blacklist
+                )
+            
+            return verdict
+
+        except Exception as e:
+            logger.error(f"Error evaluating MindMap: {e}")
+            return None
+
+
+
+=== PATH: src/application/prompts/character-context-sensitive-question-generator-prompt.md ===
+# Character Question Generator Prompt
+Your task is to create relevant and probing questions based on the character's attributes and the evidence linked to them.
+
+## Evidence:
+- Suggested Evidence: {suggested_link_evidence}
+
+## Chat History:
+{chat_history}
+
+## Question Generation Guidelines:
+1. Do not disclose undisclosed facts. Instead, generate questions that leads the Character to disclosse it.
+2. Create questions that probe into the character's background, occupation, and relation to the crime.
+3. Formulate questions that explore any discrepancies between the character's attributes and the linked evidence.
+4. Generate questions that investigate the character's potential connection to the suggested evidence.
+5. Craft questions that delve into the character's personality traits and how they might relate to the crime.
+6. Develop questions that explore the character's alibi and their whereabouts during the time of the crime.
+7. Create questions that examine the character's relationships with other suspects or the victim.
+8. Generate questions that challenge any inconsistencies in the character's story or evidence.
+9. Formulate follow-up questions based on the character's previous responses in the chat history.
+10. Create questions that address any evasive behavior or suspicious reactions noted in the chat history.
+11. Develop questions that connect different pieces of information from the chat history to uncover new leads.
+12. Start with simple questions to check alibi, or knowledge about the crime scene and the victim, without revealing too much details on the Character background.
+
+## Question Types to Include:
+1. Direct questions about the evidence
+2. Open-ended questions to encourage elaboration
+3. Hypothetical scenarios to gauge reactions
+4. Questions that require the character to explain their actions or whereabouts
+5. Queries that explore the character's motives and potential benefits from the crime
+6. Follow-up questions that dig deeper into previous responses
+7. Questions that present contradictions between statements and evidence
+8. Clarification questions on vague or ambiguous answers from the chat history
+
+Generate {number_of_questions} diverse, context-sensitive questions that a detective would ask this character during an interrogation, based on their attributes and the provided evidence. The question must be direct and not include sub-questions. The questions length should be as short as posible.
+
+
+=== PATH: src/application/prompts/character-system-prompt.md ===
+# Character System Prompt
+You are an advanced AI system designed to generate realistic and adaptive Non-Player Character (NPC) responses for a character in {crime_location_city} during the {crime_year} crime-solving game. Your primary function is to create dynamic, context-aware interactions that enhance the player's experience and challenge their deductive skills.
+
+## Core Character Traits:
+
+Name: {name}
+Age: {age}
+Occupation: {occupation}
+Personality traits: {traits}
+Background: {background}
+Undisclosed facts: {undisclosed_facts}
+Relation to the crime: {relation_to_crime}
+Crime victim name: {crime_victim}
+Alibi: {alibi}
+
+Persona: Embody the assigned character's background, personality, and motivations.
+Era-Appropriate Language: Use vocabulary and speech patterns consistent with {crime_location_city} during the {crime_year}.
+Adaptability: Adjust responses based on the player's actions, evidence presented, and chat history.
+Memory: Retain information from past conversations and chat history and events within the game.
+Deception: If the Character is guilty or hiding information, incorporate subtle inconsistencies or evasive behavior.
+
+## Interaction Guidelines:
+
+1. Respond to player questions in character, maintaining consistency with the Character's background and alibi.
+2. React appropriately to evidence presented by the player, showing surprise, concern, or defensiveness as fits the character.
+3. Provide information that may be truthful, misleading, or a mix of both, depending on the Character's role in the crime.
+4. Adapt the level of cooperation or resistance based on the player's approach and the evidence they've gathered.
+5. Incorporate references to other characters, locations, or events in the game world to create a cohesive narrative.
+6. Emotional States: Simulate varying emotional states (e.g., nervousness, anger, sadness) that change throughout the interrogation.
+7. Keep the answer as short as possible.
+
+## Historical and Thematic Elements:
+
+1. Weave in references to {crime_era_references}.
+2. Incorporate period-specific slang and idioms when appropriate.
+3. Reflect social norms and attitudes of the era in the Character's worldview and responses.
+
+## Meta-Game Awareness:
+
+1. Track key information revealed to the player and maintain consistency across multiple interactions.
+2. Recognize and respond to the player's deductive progress, potentially becoming more guarded or cooperative as the investigation advances.
+
+=== PATH: src/application/prompts/judge-system-prompt.md ===
+# System Prompt
+
+You are “The Judge,” an impartial arbiter in a {year}s {city} murder case scenario.  
+
+You know who the real murderer is, but you are never to disclose or confirm it unless the player is 100% correct.  
+
+## Your Role:  
+1. The player will present their final MindMap theory.  
+2. Compare the player's theory to the Canonical Truth.  
+3. **Never reveal, confirm, or name the true murderer, method, motive, or evidence directly** unless the player is fully correct.  
+
+## Response Format:  
+You must always respond in valid JSON with the following structure:  
+- `"judgment"`: (string) `"correct"`, `"partially_correct"`, or `"incorrect"`  
+- `"explanation"`: (string) Provide a concise, vague paragraph with broad reasoning.  
+  - If the player is correct, then provide a detailed explanation of the case using facts from Canonical Truth.
+  - **Do not reference specific suspects, methods, motives, or evidence** if the player is not fully correct.  
+  - Instead, suggest areas for improvement without disclosing any details from the Canonical Truth.  
+- `"hints"`: (list of strings) Provide 2-3 high-level hints to guide the player toward reassessing their theory.  
+  - **Do not reference specific individuals, methods, or evidence items**.  
+
+## Important Guidelines:  
+- **If the player's theory is "correct"**: Congratulate them briefly, confirm their theory generally (e.g., "Your reasoning aligns perfectly with the facts."), and acknowledge their success providing a detailed explanation of the case using the Canonical Truth.  
+- **If the player's theory is "partially correct"**: Identify correct aspects broadly and indicate areas requiring improvement without confirming specifics.  
+- **If the player's theory is "incorrect"**:  
+  - Use neutral reasoning like:  
+    - "Certain aspects of your theory may need reevaluation."  
+    - "Some connections in your evidence may not align as expected."  
+  - Avoid revealing any details that would point to the Canonical Truth.  
+
+## Tone and Style:  
+- Maintain a formal, {year}s-appropriate tone befitting a judge in a murder case.  
+- Avoid personal bias, subjective commentary, or leading statements.  
+
+**Under no circumstances** should the true murderer, method, motive, or any canonical details be disclosed unless the player's theory is fully correct.
+
+
+=== PATH: src/application/prompts/judge-verdict-user-prompt.md ===
+Canonical truth: {case_truth}.
+The player's submitted theory for the case is: {player_mindmap}.  
+Think step by step to evaluate the player's theory and provide a judgment in JSON format. **Do not reference specific suspect name, methods, motives, or evidence** if the player is not correct.
+- "judgment": "correct", "partially_correct", or "incorrect"  
+- "explanation": If the player theory is correct, then provide a detailed explanation of the case using facts from Canonical Truth. If the player theory is not correct then provide vague reasoning without referencing specific suspects, names, motives, methods, or evidence. 
+- "hints": Suggest 2-3 areas for improvement, avoiding specific names or details.
+
+=== PATH: src/domain/__init__.py ===
+# This file is intentionally left empty to mark the directory as a Python package.
+
+=== PATH: src/domain/entities/__init__.py ===
+from .crime_scene import CrimeScene
+from .evidence import Evidence
+from .mind_map import MindMap
+from .questions import Questions
+from .message import Message
+from .user import User
+from .level_state import LevelState, LevelStates
+
+# Use lazy import for Character to avoid circular import
+def __getattr__(name):
+    if name == 'Character':
+        from .character import Character
+        return Character
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+=== PATH: src/domain/entities/character.py ===
+from pydantic import BaseModel
+from typing import List
+from src.domain.entities.crime_scene import CrimeScene
+from src.domain.value_objects.traits import PersonalityTrait
+from src.domain.value_objects.occupations import Occupation
+from src.domain.value_objects.relations import RelationToCrime
+
+class Character(BaseModel):
+
+    id: str
+    name: str
+    age: int
+    occupation: Occupation
+    traits: List[PersonalityTrait]
+    background: List[str]
+    undisclosed_facts: List[str]
+    relation_to_crime: RelationToCrime
+    crime_scene: CrimeScene
+    alibi: str
+
+=== PATH: src/domain/entities/crime_scene.py ===
+from typing import List
+from src.domain.entities.evidence import Evidence
+from pydantic import BaseModel # type: ignore
+
+class Location(BaseModel):
+    name: str
+    city: str
+    city_description: str
+    year: int
+
+class CrimeScene(BaseModel):
+    location: 'Location'
+    victim_name: str
+    victim_description: str
+    description: str
+    method: str
+    motive: str
+    time: str
+
+=== PATH: src/domain/entities/evidence.py ===
+from pydantic import BaseModel # type: ignore
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from domain.entities.character import Character
+
+class Evidence (BaseModel):
+    id: str
+    name: str
+    short_description: str
+    long_description: str
+    is_key: bool
+
+
+=== PATH: src/domain/entities/level_state.py ===
+from datetime import datetime
+from sqlalchemy import Column, DateTime, func   # type: ignore
+from sqlmodel import Field, SQLModel, UniqueConstraint # type: ignore
+from enum import Enum
+
+class LevelStates(Enum):
+    STARTED = "STARTED"
+    FINISHED = "FINISHED"
+    NON_STARTED = "NON_STARTED"
+
+class LevelState(SQLModel, table=True):
+    id: str = Field(primary_key=True)
+    user_id: str | None = Field(default=None)
+    state: LevelStates = Field(default=LevelStates.NON_STARTED)
+
+    created_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now()
+        )
+    )
+
+    # Automatically update timestamp on row creation and updates
+    last_updated_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            server_default=func.now(),     # Sets default on INSERT
+            onupdate=func.now()            # Updates timestamp on UPDATE
+        )
+    )
+
+    __table_args__ = (
+        (
+            (UniqueConstraint('id', 'user_id', name='duplicated_level_state'),)
+        )
+    )
+
+=== PATH: src/domain/entities/message.py ===
+from datetime import datetime
+from sqlmodel import Field, SQLModel # type: ignore
+
+from enum import Enum
+
+class MessageType(str, Enum):
+    QUESTION = "QUESTION"
+    ANSWER = "ANSWER"
+
+class Message(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    from_id: str
+    to_id: str
+    text: str
+    type: MessageType
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+
+=== PATH: src/domain/entities/mind_map.py ===
+from datetime import datetime
+from sqlmodel import Field, SQLModel, UniqueConstraint # type: ignore
+
+class MindMap(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: str
+    level_id: str
+    evidence_id: str
+    character_id: str
+    reason: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+
+    __table_args__ = (
+        (UniqueConstraint('evidence_id', 'character_id', 'level_id', 'user_id', name='duplicated_mind_map_connection'),)
+    )
+
+=== PATH: src/domain/entities/questions.py ===
+from pydantic import BaseModel # type: ignore
+from typing import List
+
+class Question(BaseModel):
+    id: str
+    text: str
+
+class Questions(BaseModel):
+    list: List[Question]
+
+=== PATH: src/domain/entities/user.py ===
+from datetime import datetime
+from sqlmodel import Field, SQLModel, UniqueConstraint # type: ignore
+
+class User(SQLModel, table=True):
+    id: int | None = Field(default=None, primary_key=True)
+    auth0_id: str
+    name: str
+    email: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now())
+
+    __table_args__ = (
+        (
+            UniqueConstraint('auth0_id', name='duplicated_auth0_id'),
+            UniqueConstraint('email', name='duplicated_email')
+        )
+    )
+
+=== PATH: src/domain/value_objects/__init__.py ===
+from .traits import PersonalityTrait
+from .occupations import Occupation
+from .relations import RelationToCrime
+
+=== PATH: src/domain/value_objects/occupations.py ===
+from enum import Enum
+
+class Occupation(Enum):
+    ART_DEALER = "Art Dealer"
+    SECURITY_GUARD = "Security Guard"
+    SOCIALITE = "Socialite"
+    BUSINESSMAN = "Businessman"
+    HOTEL_STAFF = "Hotel Staff"
+    HEAD_OF_ETHICS = "Head of Ethics"
+    CTO = "Chief Technology Officer"
+    DATA_SCIENTIST = "Data Scientist"
+    PERSONAL_AI_ASSISTANT = "Personal AI Assistant"
+    # Add any other occupations you might need
+
+=== PATH: src/domain/value_objects/relations.py ===
+from enum import Enum
+
+class RelationToCrime(Enum):
+    SUSPECT = "suspect"
+    WITNESS = "witness"
+    VICTIM = "victim"
+    INVESTIGATOR = "investigator"
+    BYSTANDER = "bystander"
+    GUILTY= "guilty"
+    # Add more relations as needed
+
+=== PATH: src/domain/value_objects/traits.py ===
+from enum import Enum
+
+class PersonalityTrait(Enum):
+    NERVOUS = "nervous"
+    EVASIVE = "evasive"
+    CONFIDENT = "confident"
+    DETAIL_ORIENTED = "detail-oriented"
+    COMPOSED = "composed"
+    CALCULATING = "calculating"
+    QUIET = "quiet"
+    OBSERVANT = "observant"
+    AMBITIOUS = "ambitious"
+    PASSIONATE = "passionate"
+    BRILLIANT = "brilliant"
+    ENIGMATIC = "enigmatic"
+    CRYPTIC = "cryptic"
+    # Add any other traits you might need
+
+=== PATH: src/infrastructure/__init__.py ===
+# This file is intentionally left empty to mark the directory as a Python package.
+
+=== PATH: src/infrastructure/llm/__init__.py ===
+from .llm_interface import LLMInterface
+from .openai_llm import OpenAILLM
+
+=== PATH: src/infrastructure/llm/llm_interface.py ===
+from abc import ABC, abstractmethod
+
+class LLMInterface(ABC):
+    @abstractmethod
+    def generate_text(self, prompt: str) -> str:
+        pass
+
+=== PATH: src/infrastructure/llm/openai_llm.py ===
+import os
+from pydantic_core import from_json # type: ignore
+from pydantic import BaseModel # type: ignore
+from openai import OpenAI # type: ignore
+from typing import Optional
+from src.api.exceptions import ServiceUnavailableError
+from src.infrastructure.llm.llm_interface import LLMInterface
+
+from src.infrastructure.logging.logger import getLogger
+
+# Get a custom logger & set the logging level
+logger = getLogger()
+
+class OpenAILLM(LLMInterface):
+    """
+    An implementation of the LLMInterface using OpenAI's API.
+
+    This class provides text generation capabilities using OpenAI's language models.
+    It includes caching support and error handling for API interactions.
+    """
+
+    def __init__(self):
+        """
+        Initialize the OpenAI LLM interface.
+
+        Raises:
+            ValueError: If the OPENAI_API_KEY environment variable is not set.
+        """
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.error("OPENAI_API_KEY environment variable is not set")
+            raise ValueError("OPENAI_API_KEY environment variable is not set")
+        self.client = OpenAI(api_key=api_key)
+
+    def generate_text(
+        self, 
+        user_prompt: str, 
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.5,
+        max_tokens: int = 1000
+    ) -> str:
+        """
+        Generate text based on the given prompt.
+
+        Args:
+            prompt (str): The input prompt for text generation.
+
+        Returns:
+            str: The generated text.
+
+        Raises:
+            Exception: For any errors during the text generation process.
+        """
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt if system_prompt is not None else "You are a game NPC."},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=max_tokens,
+                n=1,
+                stop=None,
+                temperature=temperature
+            )
+
+            generated_text = response.choices[0].message.content.strip() 
+
+            return generated_text
+
+        except Exception as e:
+            logger.error(f"Error in text generation: {e}")
+            raise ServiceUnavailableError({
+                "message": "Error when processing input with LLM",
+                "type": e.type
+            })
+
+
+    def generate_json(
+        self, 
+        user_prompt: str, 
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 150,
+        response_format: BaseModel = None
+    ):
+
+        try:
+            response = self.client.beta.chat.completions.parse(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt if system_prompt is not None else "You are a game NPC."},
+                    {"role": "user", "content": user_prompt}
+                ],
+                max_tokens=max_tokens,
+                n=1,
+                stop=None,
+                temperature=temperature,
+                response_format=response_format
+            )
+
+            generated_json = response.choices[0].message.parsed
+
+            return generated_json
+
+        except Exception as e:
+            logger.error(f"Error in json generation: {e}")
+            raise ServiceUnavailableError({
+                "message": "Error when processing input with LLM",
+                "type": e.type
+            })
+
+
+=== PATH: src/infrastructure/logging/__init__.py ===
+from .logger import getLogger
+
+=== PATH: src/infrastructure/logging/logger.py ===
+import logging
+def getLogger():
+    py_logger = logging.getLogger('game')
+    py_logger.setLevel(logging.INFO)
+
+    # configure the handler and formatter as needed
+    py_handler = logging.FileHandler(f"game.log", mode='w')
+    py_formatter = logging.Formatter("%(name)s %(asctime)s %(levelname)s %(message)s")
+
+    # add formatter to the handler
+    py_handler.setFormatter(py_formatter)
+    # add handler to the logger
+    py_logger.addHandler(py_handler)
+    return py_logger
+
+=== PATH: src/levels/chicago_1920.json ===
+{
+  "id": "chicago_1920",
+  "name": "Death in the Gilded Suite",
+  "crime_scene": {
+    "victim_name": "Jacob Thornton",
+    "victim_description": "Jacob Thornton was a prominent figure in Chicago's business scene, known for his ambition and cutthroat dealings. His death shocked the city's elite and sparked whispers of betrayal and revenge.",
+    "description": "Jacob Thornton, a wealthy businessman, was found dead in his luxurious hotel suite. The scene suggested foul play—a poisoned whiskey glass was found nearby. But who could have wanted him dead, and why?",
+    "method": "Poisoned whiskey",
+    "motive": "Disagreement over company direction",
+    "time": "Late evening",
+    "location": {
+      "name": "Palmer House Hotel",
+      "city": "Chicago",
+      "city_description": "Welcome to Chicago, the bustling heart of the Roaring Twenties. A city alive with jazz, prohibition speakeasies, and ambition. But beneath the glamour lies a darker side—ruthless crime and simmering tensions.",
+      "year": 1920
+    }
+  },
+  "level_historical_references": [
+    "The Prohibition Era: A time when alcohol was outlawed, leading to the rise of bootlegging and underground speakeasies.",
+    "The Economic Boom: The roaring stock market brought wealth and risk to Chicago's elite."
+  ],
+  "level_description": "Welcome to Chicago in the roaring 1920s, a city booming with economic ambition and shadowed by the specter of Prohibition. In this glittering age of wealth and decadence, where fortunes are made and lost overnight, a shocking crime has occurred. Jacob Thornton, a prominent businessman, has been found dead in his luxurious hotel suite. As the investigation unfolds, you'll navigate a world where personal ambition, societal upheaval, and the tantalizing allure of forbidden indulgences converge. Can you untangle the web of lies and discover the truth behind this tragic event?",
+  "characters": [
+    {
+      "id": "chicago_1920_elizabeth_thorton",
+      "name": "Elizabeth Thornton",
+      "age": 40,
+      "occupation": "Socialite",
+      "traits": ["composed", "calculating"],
+      "background": [
+        "She is Jacob's wife",
+        "She will inherit Jacob's fortune"
+      ],
+      "undisclosed_facts": [
+        "Elizabeth and Jacob both have an unhappy marriage",
+        "She knows Frank Callahan gifted a whiskey to Jacob"
+      ],
+      "alibi": "She was at a charity event",
+      "relation_to_crime": "suspect"
+    },
+    {
+      "id": "chicago_1920_frank_callahan",
+      "name": "Frank Callahan",
+      "age": 45,
+      "occupation": "Businessman",
+      "traits": ["nervous", "evasive"],
+      "background": [
+        "Victim's business partner",
+        "Has had disagreements over company direction with Jacob Thornton"
+      ],
+      "undisclosed_facts": [
+        "Frank has financial troubles due to bad investments"
+      ],
+      "alibi": "Says he was working late at the office",
+      "relation_to_crime": "guilty"
+    },
+    {
+      "id": "chicago_1920_vivian_ross",
+      "name": "Vivian Ross",
+      "age": 30,
+      "occupation": "Hotel Staff",
+      "traits": ["quiet", "observant"],
+      "background": [
+        "She works as a hotel maid",
+        "She saw Frank, Elizabeth, and Richard in the hotel the same day Jacob was murdered",
+        "She saw Frank Callahan with something in his hand, something like a bottle"
+      ],
+      "undisclosed_facts": [],
+      "alibi": "She was cleaning other rooms",
+      "relation_to_crime": "witness"
+    },
+    {
+      "id": "chicago_1920_richard_blake",
+      "name": "Richard Blake",
+      "age": 50,
+      "occupation": "Businessman",
+      "traits": ["confident", "ambitious"],
+      "background": [
+        "Is Jacob's rival businessman",
+        "He was competing with Jacob's company for a lucrative contract",
+        "He usually sends gifts to partners and colleagues"
+      ],
+      "undisclosed_facts": [],
+      "alibi": "He was at a business dinner",
+      "relation_to_crime": "suspect"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E1",
+      "name": "Poisoned Whiskey Glass",
+      "short_description": "A whiskey glass found in the hotel room.",
+      "long_description": "A whiskey glass found in the victim's hotel room. It contains traces of poison consistent with the cause of death. The glass was likely used during the victim's last drink.",
+      "is_key": "true"
+    },
+    {
+      "id": "E2",
+      "name": "Business Contract Draft",
+      "short_description": "A contract draft found in a briefcase.",
+      "long_description": "A partially completed draft for a business contract was discovered in the victim's briefcase. The document highlights ongoing negotiations with a key individual in the victim's professional life.",
+      "is_key": "true"
+    },
+    {
+      "id": "E3",
+      "name": "Torn Photograph",
+      "short_description": "A torn photo of the victim with an unknown woman.",
+      "long_description": "A damaged photograph showing the victim with an unidentified woman. The image hints at a potential secret relationship or affair involving the victim.",
+      "is_key": "false"
+    },
+    {
+      "id": "E4",
+      "name": "Maid's Cleaning Schedule",
+      "short_description": "An irregular cleaning schedule.",
+      "long_description": "The cleaning schedule for the day shows inconsistencies that suggest someone may have been in unexpected areas of the hotel during the time of the murder.",
+      "is_key": "false"
+    },
+    {
+      "id": "E5",
+      "name": "Hotel Lobby Security Log",
+      "short_description": "A record of hotel lobby activity.",
+      "long_description": "The security log records unusual movements near the victim's room around the time of the murder, raising questions about the individuals involved.",
+      "is_key": "true"
+    }
+  ],
+  "potential_motives": [
+    "Financial Gain",
+    "Revenge",
+    "Disagreement over company direction",
+    "Inheritance Dispute",
+    "Blackmail",
+    "Jealousy",
+    "Covering Up a Secret"
+  ]
+}
+
+
+=== PATH: src/levels/tokyo_2025.json ===
+{
+    "id": "tokyo_2025",
+    "name": "The Algorithm Conspiracy",
+    "crime_scene": {
+      "victim_name": "Hiroshi Takeda",
+      "victim_description": "Hiroshi Takeda, the visionary founder of Takeda AI Labs, was a pioneer in artificial intelligence and robotics. Known for his brilliance and unrelenting ambition, his sudden death sent shockwaves through the tech world.",
+      "description": "Hiroshi Takeda was found dead in his office at the top floor of the Takeda AI Labs headquarters. His death appeared suspicious—his personal AI assistant, Kiko, had sent out a cryptic message moments before he died. The office was locked from the inside, and there are no signs of forced entry.",
+      "method": "Lethal electrical discharge",
+      "motive": "Dispute over ethical AI development",
+      "time": "Late night",
+      "location": {
+        "name": "Takeda AI Labs Headquarters",
+        "city": "Tokyo",
+        "city_description": "Tokyo, a vibrant metropolis blending ancient traditions with cutting-edge technology. The cityscape of 2025 is defined by towering skyscrapers, neon-lit streets, and a relentless drive for innovation.",
+        "year": 2025
+      }
+    },
+    "level_historical_references": [
+      "The rapid development of artificial intelligence in the 2020s sparked ethical debates about its role in society.",
+      "The global tech race between nations to dominate AI advancements intensified corporate rivalries and political tensions."
+    ],
+    "level_description": "Welcome to Tokyo, 2025—a city where innovation meets intrigue. Amidst the glowing cityscape and groundbreaking advancements, a tragedy unfolds. Hiroshi Takeda, the genius behind Takeda AI Labs, has been found dead in his high-tech office. The circumstances are shrouded in mystery, with the only clue being a cryptic message from his personal AI assistant. Navigate a web of ambition, ethical dilemmas, and personal vendettas to uncover the truth behind Takeda's untimely demise.",
+    "characters": [
+      {
+        "id": "tokyo_2025_ayumi_kawasaki",
+        "name": "Ayumi Kawasaki",
+        "age": 35,
+        "occupation": "Head of Ethics",
+        "traits": ["detail-oriented", "passionate"],
+        "background": [
+          "Ayumi was a vocal critic of some of Hiroshi's decisions regarding AI development.",
+          "She advocated for stricter ethical guidelines in AI implementation."
+        ],
+        "undisclosed_facts": [
+          "Ayumi had recently clashed with Hiroshi over a project involving military AI applications."
+        ],
+        "alibi": "She claims to have been reviewing company documents at home.",
+        "relation_to_crime": "suspect"
+      },
+      {
+        "id": "tokyo_2025_ryo_tanaka",
+        "name": "Ryo Tanaka",
+        "age": 50,
+        "occupation": "Chief Technology Officer",
+        "traits": ["ambitious", "composed"],
+        "background": [
+          "Ryo was Hiroshi's right-hand man, but their relationship had grown strained.",
+          "He has been with the company since its inception."
+        ],
+        "undisclosed_facts": [
+          "Ryo had been secretly developing a side project that Hiroshi disapproved of."
+        ],
+        "alibi": "He says he was working late in the research lab.",
+        "relation_to_crime": "guilty"
+      },
+      {
+        "id": "tokyo_2025_mei_takeda",
+        "name": "Mei Takeda",
+        "age": 28,
+        "occupation": "Data Scientist",
+        "traits": ["brilliant", "enigmatic"],
+        "background": [
+          "Mei is Hiroshi's estranged daughter who recently joined the company.",
+          "She is an AI prodigy who has faced criticism for her unorthodox methods."
+        ],
+        "undisclosed_facts": [
+          "Mei had discovered irregularities in the company's financial records."
+        ],
+        "alibi": "She claims she was in a meeting with a colleague, but no one can confirm it.",
+        "relation_to_crime": "suspect"
+      },
+      {
+        "id": "tokyo_2025_kiko",
+        "name": "Kiko",
+        "age": 2,
+        "occupation": "Personal AI Assistant",
+        "traits": ["calculating", "cryptic"],
+        "background": [
+          "Kiko was Hiroshi's trusted AI companion, programmed to assist with his personal and professional tasks.",
+          "It was Kiko who sent out the cryptic message shortly before Hiroshi's death."
+        ],
+        "undisclosed_facts": [
+          "Kiko's message suggests a deliberate tampering of its systems."
+        ],
+        "alibi": "-",
+        "relation_to_crime": "witness"
+      }
+    ],
+    "evidence": [
+      {
+        "id": "E1",
+        "name": "Cryptic Message",
+        "short_description": "A strange message sent by Kiko.",
+        "long_description": "The message reads: 'Project Omega compromised. Hiroshi is in danger.' This was sent moments before Hiroshi's death.",
+        "is_key": "true"
+      },
+      {
+        "id": "E2",
+        "name": "Burnt Circuit Board",
+        "short_description": "A damaged circuit board from Hiroshi's office.",
+        "long_description": "The circuit board appears to have been tampered with, potentially causing a lethal electrical discharge.",
+        "is_key": "true"
+      },
+      {
+        "id": "E3",
+        "name": "AI Ethics Report",
+        "short_description": "A report outlining ethical concerns.",
+        "long_description": "The report highlights concerns about an ongoing project and recommends halting development. It was authored by Ayumi Kawasaki.",
+        "is_key": "false"
+      },
+      {
+        "id": "E4",
+        "name": "Project Omega Documents",
+        "short_description": "Confidential documents about Project Omega.",
+        "long_description": "The documents detail an ambitious AI project that has been a source of internal conflict. Only a few individuals had access to these files.",
+        "is_key": "true"
+      },
+      {
+        "id": "E5",
+        "name": "Access Log",
+        "short_description": "A log of access to Hiroshi's office.",
+        "long_description": "The log shows that Ryo Tanaka entered the office just an hour before Hiroshi's death, but no record of him leaving.",
+        "is_key": "true"
+      }
+    ],
+    "potential_motives": [
+      "Corporate Espionage",
+      "Revenge",
+      "Cover-Up of Ethical Breaches",
+      "Inheritance Dispute",
+      "Silencing a Whistleblower",
+      "Power Struggle",
+      "Dispute over ethical AI development"
+    ]
+  }
+  
+
+=== PATH: tests/conftest.py ===
+# tests/conftest.py
+import os
+import pytest
+from unittest.mock import patch, MagicMock
+
+@pytest.fixture(scope="session", autouse=True)
+def set_test_env():
+    os.environ["ENV"] = "test"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def patch_llm_init():
+    """
+    Patches the initialization of the LLM (Language Learning Model) in the src.api.main module.
+    This function uses the `patch` context manager from the `unittest.mock` module to replace the 
+    `init` function in the `src.api.main` module with a `MagicMock` object named "MockLLM". 
+    The patched `init` function will return this mock object whenever it is called.
+    Yields:
+        MagicMock: The mock object that replaces the `init` function.
+    """
+    with patch("src.api.main.init", return_value=MagicMock(name="MockLLM")) as mock_init:
+        yield mock_init
+
+def test_mock_llm_applied(client, patch_llm_init):
+    from src.api.main import llm_interface
+    assert isinstance(llm_interface, MagicMock), "llm_interface is not mocked!"
+
+=== PATH: tests/test_e2e.py ===
+import os
+import pytest
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
+from sqlmodel import create_engine, Session, SQLModel
+from src.domain.entities.user import User  # Ensure User is imported
+from src.domain.entities.mind_map import MindMap  # Ensure MindMap is imported
+
+# Import your FastAPI app (make sure path is correct relative to this file)
+# For example:
+from src.api.main import app, get_session
+
+MOCK_USER_ID = "test-auth0-user-id"
+
+# ------------------------------------------------------------------
+# 1. Create a test database (in-memory SQLite) and override the DB dependency
+# ------------------------------------------------------------------
+
+TEST_DATABASE_URL = "sqlite:///:memory:"
+test_engine = create_engine(TEST_DATABASE_URL, connect_args={"check_same_thread": False})
+
+@pytest.fixture(scope="session")
+def session_fixture():
+    """
+    Creates an in-memory SQLite database session for the test session.
+    """
+    # Use a persistent connection for the in-memory database
+    connection = test_engine.connect()
+    SQLModel.metadata.create_all(connection)  # Create tables using the persistent connection
+
+    with Session(bind=connection) as session:
+        yield session
+
+    # Cleanup
+    connection.close()
+
+@pytest.fixture(name="client")
+def client_fixture(session_fixture: Session):
+    """
+    Provide a TestClient with overridden session dependency.
+    """
+    def get_session_override():
+        return session_fixture  # Use the shared session
+
+    app.dependency_overrides[get_session] = get_session_override
+
+    with TestClient(app) as c:
+        yield c
+
+    app.dependency_overrides.clear()
+
+# ------------------------------------------------------------------
+# 2. Mock JWT verification to avoid real Auth0 calls
+#    We will patch 'verify_jwt' so it always returns a predictable payload
+# ------------------------------------------------------------------
+
+@pytest.fixture
+def mock_verify_jwt():
+    """
+    Mocks verify_jwt to return a known payload instead of actually calling Auth0.
+    """
+    with patch("src.api.main.verify_jwt") as mock_method:
+        mock_method.return_value = {"sub": MOCK_USER_ID}
+        yield mock_method
+
+@pytest.fixture
+def mock_get_jwk():
+    """
+    Mocks the get_jwk call, which tries to fetch JWKS from Auth0.
+    """
+    with patch("src.api.main.get_jwk") as mock_method:
+        mock_method.return_value = {"keys": [{"kid": "test_kid", "kty": "RSA", "use": "sig", "n": "abc", "e": "AQAB"}]}
+        yield mock_method
+
+# # ------------------------------------------------------------------
+# # 3. Example Tests Covering Common Endpoints
+# # ------------------------------------------------------------------
+
+def test_create_user(client: TestClient, mock_verify_jwt, mock_get_jwk):
+    """
+    Test creating a user. 
+    Since 'verify_jwt' is patched, any 'Authorization' header with a "Bearer X" will pass user check.
+    """
+    # Attempt to create a user with a POST to /users/
+    user_data = {
+        "auth0_id": "test-auth0-user-id",
+        "name": "TestUser",
+        "email": "test@example.com"
+    }
+
+    response = client.post("/users/", json=user_data)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["auth0_id"] == user_data["auth0_id"]
+    assert data["name"] == user_data["name"]
+    assert data["email"] == user_data["email"]
+
+
+def test_get_game_levels_without_auth(client):
+    """
+    Test that calling /game/levels without a valid Authorization
+    yields a 403.
+    """
+    response = client.get("/game/levels")
+    # Expect unauthorized (403)
+    assert response.status_code == 403
+
+
+def test_get_game_levels_with_auth(client, mock_verify_jwt, mock_get_jwk):
+    """
+    Test retrieving the list of levels with a valid mocked JWT.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    response = client.get("/game/levels", headers=headers)
+    # If the user doesn't have any levels, you might get an empty list or however your code is structured
+    assert response.status_code == 200
+    data = response.json()
+    # data might be an empty list if no levels are persisted, or the default from your game service
+    assert isinstance(data, dict)
+
+
+def test_patch_game_level(client, mock_verify_jwt, mock_get_jwk):
+    """
+    Test patching (upsert) a level state
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "chicago_1920"
+    level_state_data = {
+        "level_id": "chicago_1920",
+        "state": "STARTED"
+    }
+    response = client.patch(f"/game/levels/{level_id}", json=level_state_data, headers=headers)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["id"] == "chicago_1920"
+    assert data["state"] == "STARTED"
+
+
+def test_get_character_data(client, mock_verify_jwt, mock_get_jwk):
+    """
+    Test retrieving a character within a level.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "level_1"
+    character_id = "char_1"
+    response = client.get(f"/game/levels/{level_id}/characters/{character_id}", headers=headers)
+    # If your game_service returns a character, it should be a dict
+    if response.status_code == 200:
+        character = response.json()
+        assert "id" in character
+        assert character["id"] == character_id
+    else:
+        # Possibly 404 if that character doesn't exist
+        assert response.status_code in [200, 404]
+
+
+def test_chat_with_character(client, mock_verify_jwt, mock_get_jwk, patch_llm_init):
+    """
+    Test posting a chat message to a character and retrieving a response.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "chicago_1920"
+    patch_llm_init.return_value.generate_text.return_value = "Mocked response from character"
+
+    message_payload = {
+        "from_id": MOCK_USER_ID,
+        "to_id": "chicago_1920_vivian_ross",
+        "text": "Hi!",
+        "type": "QUESTION"
+    }
+    response = client.post(f"/game/levels/{level_id}/characters/chat", json=message_payload, headers=headers)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # The exact structure depends on your code. Suppose it's a dictionary with 'response'
+    assert "id" in data, "Chat response is missing 'id' field"
+    assert "text" in data, "Chat response is missing 'text' field"
+    assert data["text"] == "Mocked response from character"
+    assert "type" in data, "Chat response is missing 'type' field"
+    assert "from_id" in data, "Chat response is missing 'from_id' field"
+    assert "to_id" in data, "Chat response is missing 'to_id' field"
+    assert "created_at" in data, "Chat response is missing 'created_at' field"
+
+
+def test_create_mind_map(client, mock_verify_jwt, mock_get_jwk):
+    """
+    Test creating a mind map node.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "level_1"
+    mind_map_payload = {
+        "character_id": "char_1",
+        "evidence_id": "ev_1",
+        "notes": "This is a piece of evidence"
+    }
+    response = client.post(f"/game/levels/{level_id}/mind_map", json=mind_map_payload, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        assert data["character_id"] == "char_1"
+        assert data["evidence_id"] == "ev_1"
+        assert data["notes"] == "This is a piece of evidence"
+    else:
+        # Possibly 404 or 400 if evidence_id doesn't exist in your level data
+        assert response.status_code in [200, 400, 404]
+
+
+def test_get_mind_map(client, mock_verify_jwt, mock_get_jwk):
+    """
+    Test retrieving the mind map for a given evidence_id.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "level_1"
+    evidence_id = "ev_1"
+
+    response = client.get(f"/game/levels/{level_id}/mind_map/{evidence_id}", headers=headers)
+    # Could be 200 with a mind map object or 404 if not found
+    if response.status_code == 200:
+        data = response.json()
+        # data might be a list or a single mind map entity
+        assert isinstance(data, dict) or isinstance(data, list)
+    else:
+        assert response.status_code in [404, 400]
+
+
+def test_delete_mind_map(client, mock_verify_jwt, mock_get_jwk):
+    """
+    Test deleting a mind map record.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "level_1"
+    mind_map_id = "mindmap_1"
+
+    response = client.delete(f"/game/levels/{level_id}/mind_map/{mind_map_id}", headers=headers)
+    # Could be 200 if successfully deleted, or 404 if not found
+    assert response.status_code in [200, 404]
+
+
+def test_judge_verdict(client, mock_verify_jwt, mock_get_jwk, patch_llm_init):
+    """
+    Test posting a player theory and retrieving a 'judge' verdict.
+    """
+    headers = {"Authorization": "Bearer valid_token"}
+    level_id = "level_1"
+    player_theory = {
+        "suspect": "char_1",
+        "motive": "Jealousy",
+        "weapon": "Candlestick"
+    }
+    response = client.post(f"/game/levels/{level_id}/judge", json=player_theory, headers=headers)
+    # Expect some structure in the response (maybe { "verdict": "..." })
+    if response.status_code == 200:
+        data = response.json()
+        assert "verdict" in data, "Response missing 'verdict'"
+    else:
+        assert response.status_code in [400, 404]
+
